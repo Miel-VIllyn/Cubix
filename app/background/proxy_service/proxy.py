@@ -1,19 +1,8 @@
 import socket
 import json
 from typing import Any
-
-# -------------------------------------------------------------------
-# Put this in it's own file
-from threading import Thread, Lock, Event
-
-# Thread wrapper
-def Threaded(func):
-    def wrapper(*args:list[Any], **kwargs: dict[str, Any]) -> Thread:
-        thread = Thread(target=func, args=args, kwargs=kwargs)
-        thread.start()
-        return thread
-    return wrapper
-# -------------------------------------------------------------------
+from threading import Event
+from background.wrapers.wrapers import Threaded
 
 class Proxy_TCP:
     """
@@ -25,21 +14,19 @@ class Proxy_TCP:
     def __init__(
             self,
             incomming:socket.socket|None= None,
-            outgoing_addres:socket._Address|None= None,
-            bind:socket._Address|None = None,
+            outgoing_addres:tuple[str, ...]|None= None,
+            bind:tuple[str, ...]|None = None,
             listener:bool = False,
             callback:object|None = None
         ) -> None:
-        self.mutex = Lock()
         self.client: socket.socket|None = incomming
-        self.server_address:socket._Address|None = outgoing_addres
+        self.server_address:tuple[str, ...]|None = outgoing_addres
         self.__alive:bool = True
 
         self.run_event = Event()
 
         if listener:
             self.listener(bind, callback) # Starts a background listener for new incomming connections
-            print("Listener is now running")
 
     @property
     def alive(self):
@@ -49,7 +36,7 @@ class Proxy_TCP:
         self.__alive = False
     
     @Threaded
-    def listener(self, bind:socket._Address, callback):
+    def listener(self, bind:tuple[str, ...]|None, callback):
         if bind is None:
             bind = ("127.0.0.1", 80)
         if callback is None:
@@ -59,21 +46,29 @@ class Proxy_TCP:
         main_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         main_sock.bind(bind)
         main_sock.listen(1)
+        print(main_sock)
 
         while self.alive:
             client, client_address = main_sock.accept()
+            print(client_address)
             callback(client, client_address)
-        
+
+    def show_recieved_data(self):
+        if self.client is not None:
+            return self.client.recv(1024, socket.MSG_PEEK)
+        else: return b""
 
     def return_client(self, data:Any):
         if self.client is None:
             raise self.InsufficientArgumentError("Calling this function requires the 'client' to be set")
-        with self.mutex:
-            print(f"Returned: {data}")
-            if type(data) is dict:
-                self.client.sendall(json.dumps(data).encode())
-            elif type(data) is str:
-                self.client.sendall(data.encode())
+
+        print(f"Returned: {data}")
+        if isinstance(data, dict):
+            self.client.sendall(json.dumps(data).encode())
+        elif isinstance(data, str):
+            self.client.sendall(data.encode())
+        elif isinstance(data, bytes):
+            self.client.sendall(data)
         
         self.stop()
 
@@ -109,21 +104,28 @@ class Proxy_TCP:
                     if tag:
                         print(f"{tag}: [ Stopped execution ]")
                     break
-                dst.sendall(data)
+                try:
+                    dst.sendall(data)
+                except OSError as error:
+                    if error.errno == 9:
+                        self.stop()
+
             if not self.alive:
                 src.close()
                 dst.close()
 
-        forward(self.client, server_sock, tag="Client -> Server")
-        forward(server_sock, self.client, tag="Server -> Client")
+        forward(self.client, server_sock)
+        forward(server_sock, self.client)
 
         start()
 
-
-def action(sock:socket.socket, _:socket._Address):
-    prox = Proxy_TCP(sock, ("192.168.1.3", 8000))
-    # prox.return_client("HTTP 1.0 200 OK\r\nserver: Proxy\r\ncontent-length: 27\r\ncontent-type: application/json\r\n\r\n" + json.dumps({"object": "Hello, World!"}))
-    prox.handle_proxy()
+    def __del__(self):
+        pass
 
 if __name__ == "__main__":
+    def action(sock:socket.socket, _:tuple[str, ...]):
+        prox = Proxy_TCP(sock, ("192.168.1.3", 8000))
+        # prox.return_client("HTTP 1.0 200 OK\r\nserver: Proxy\r\ncontent-length: 27\r\ncontent-type: application/json\r\n\r\n" + json.dumps({"object": "Hello, World!"}))
+        prox.handle_proxy()
+    
     Proxy_TCP(callback= action, listener=True, bind= ("127.0.0.1", 8000))
