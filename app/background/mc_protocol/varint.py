@@ -28,9 +28,10 @@ class VarInt:
         if self.DEBUG:
             stop = time.perf_counter_ns()
             print(f"__decode(): {stop - start}ns")
+        self.input = data[:ind+1:]
         return result
     
-    def __encode(self, value) -> bytes:
+    def __encode(self, value:str|bytes|int|str) -> bytes:
         if self.DEBUG:
             start = time.perf_counter_ns()
         
@@ -55,7 +56,7 @@ class VarInt:
 
     def decode(self, encoding:str = None) -> str:
         self.input = self.input.decode(encoding)
-        self.input
+        return self.input
 
     @property
     def value(self) -> int|bytes:
@@ -67,17 +68,21 @@ class VarInt:
 
     @property
     def as_int(self) -> int:
-        if type(self.input) == bytes:
+        if isinstance(self.input, bytes):
             return self.__decode(self.input)
-        elif type(self.input) == int:
-            raise TypeError("Invalid type: expecting type(bytes), given type(int)")
+        elif isinstance(self.input, int):
+            return int(self.input)
+        else:
+            return -1
     
     @property
     def as_VarInt(self) -> bytes:
-        if type(self.input) == int:
+        if isinstance(self.input, int):
             return self.__encode(self.input)
-        elif type(self.input) == bytes:
-            raise TypeError("Invalid type: expecting type(int), given type(bytes)")
+        elif isinstance(self.input, bytes):
+            return self.input
+        else:
+            return b""
 
     # Add multiple items together and convert them to a VarInt type
     def __add__(self, addition:str|bytes|int):

@@ -1,8 +1,8 @@
 from background.proxy_service.proxy import Proxy_TCP
 from background.static_data_types.dataclasses import *
-from background.wrapers.wrapers import Threaded
+from background.mc_protocol.motd import MC_protocol
+from background.mc_protocol.varint import VarInt
 import json
-import time
 
 class Client:
     class UnhandelableStateError(Exception): pass
@@ -46,18 +46,60 @@ class Client:
         else:
             return False
 
-    def handle_offline(self, proxy:Proxy_TCP):
-        # Test on disconnect message
-        print(proxy.show_recieved_data())
-        json_string = json.dumps({"text": "The server is currently OFFLINE, try again later.","color": "red"})
-        json_bytes = json_string.encode("utf-8")
+    def return_ping(self, proxy:Proxy_TCP, obj:MotdObjects, protocol_version:int|None = None):
+        if isinstance(obj, Motd.Status.StatusRequest):
+            message = Motd.Status.Status(
+                    ("Dead", protocol_version),
+                    "This server is dead",
+                    enforcesecurechat= True
+                ).byte_package()
 
-        data = b"\x00" + VarInt(len(json_bytes)).as_VarInt + json_bytes
-        length = VarInt(len(data)).as_VarInt
-        proxy.return_client(length + data)
+            proxy.return_client(message)
+        elif isinstance(obj, Motd.Status.PingRequest):
+            message = Motd.Status.PongResonse(
+                obj.timestamp
+            ).byte_package()
+
+            proxy.return_client(message)
+
+    def return_disconnect(self, proxy:Proxy_TCP):
+        message = Motd.Login.Disconnect(
+            "The server is offline, try again later",
+            "red"
+        ).byte_package()
+        proxy.return_client(message)
+
+    def handle_offline(self, proxy:Proxy_TCP):
+        login = False
+        connect_type = 0
+        protocol_version = 0
+
+        while proxy.alive:
+            data = proxy.show_recieved_data(4092)
+            split_data = MC_protocol.seperate_concatenated_packets(data)
+
+            built_objects:list[MotdObjects] = []
+
+            for _, packet in split_data:
+                built_object = MC_protocol.build_packet_classes(packet, login)
+                built_objects.append(built_object)
+                if isinstance(built_object, Motd.MotdHandshake):
+                    connect_type = built_object.intent.as_int
+                    protocol_version = built_object.protocol_version.as_int
+                    if built_object.intent.as_int == Motd.Handshake.LOGIN.value:
+                        login = True
+                    elif built_object.intent.as_int == Motd.Handshake.TRANSFER.value:
+                        login = True
+
+            for obj in built_objects:
+                if connect_type == Motd.Handshake.LOGIN.value or connect_type == Motd.Handshake.TRANSFER.value:
+                    self.return_disconnect(proxy)
+                elif connect_type == Motd.Handshake.STATUS.value:
+                    self.return_ping(proxy, obj, protocol_version)
 
     def run(self):
         proxy = Proxy_TCP(self.client_info.client_socket, self.client_info.parent.server_address)
+        # Grab handshake packet
         if self.alive and self.parent_alive():
             proxy.handle_proxy()
         elif not self.alive and self.parent_alive():
@@ -75,6 +117,7 @@ class Client:
 import socket
 
 def callback(sock:socket.socket, address:tuple[str, ...]):
+    print(address)
     info = ClientInfo(
         address,
         sock,

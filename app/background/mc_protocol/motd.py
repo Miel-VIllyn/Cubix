@@ -1,10 +1,86 @@
-import json
-import os
-import base64
-import socket
-from background.motd.varint import VarInt
+"""
+look at the following (Minecraft Java protocols)[https://minecraft.wiki/w/Java_Edition_protocol/Packets]
+for more infomation about the underlying low-level dataflow from minecraft Java Edition
+"""
+
+from background.mc_protocol.varint import VarInt
 from background.static_data_types.dataclasses import *
 
+class MC_protocol:
+    @staticmethod
+    def seperate_concatenated_packets(data:bytes) -> list[tuple[int, bytes]]:
+        return_data:list[tuple[int, bytes]] = []
+        while len(data) > 0:
+            length = VarInt(data)
+            length_byte = length.as_int
+            return_data.append((length_byte, data[len(bytes(length.value)):length_byte+1]))
+            data = data[length_byte+1::]
+
+        return return_data
+
+    @staticmethod
+    def handle_ping_build(packet:bytes) -> MotdObjects:
+        match VarInt(packet).as_int:
+            case Packet_Type.Handshake.value | Packet_Type.STATUS.value:
+                if len(packet) > 1:
+                    offset = 1
+                    protocol_version = VarInt(packet[offset::])
+                    protocol_version.as_int
+                    offset += len(bytes(protocol_version.value))
+                    server_address_len = VarInt(packet[offset::])
+                    server_address_len.as_int
+                    offset += len(bytes(server_address_len.value))
+                    server_address = packet[offset:offset+server_address_len.as_int:].decode()
+                    offset += server_address_len.as_int
+                    server_port = int.from_bytes(packet[offset:offset+2:], byteorder="big")
+                    offset += 2
+                    intent = VarInt(packet[offset::])
+
+                    return Motd.MotdHandshake(
+                        protocol_version,
+                        server_address,
+                        server_port,
+                        intent
+                    )
+                    
+                else:
+                    return Motd.Status.StatusRequest()
+            case Packet_Type.PONG.value:
+                return Motd.Status.PingRequest(
+                    int.from_bytes(packet[1::], byteorder="big", signed=True)
+                )
+            case _:
+                return MotdObjects()
+
+    @staticmethod
+    def handle_login_build(packet:bytes) -> MotdObjects:
+        match VarInt(packet).as_int:
+            case Packet_Type.LOGIN.value:
+                offset = 1
+                username_len = VarInt(packet[1::]).as_int
+                username = packet[offset:username_len+offset+1:].decode()
+                offset += username_len+1
+                player_uuid = UUID(bytes= packet[offset::])
+                return Motd.Login.LoginStart(
+                    username,
+                    player_uuid
+                )
+            case _:
+                return MotdObjects()
+
+    @staticmethod
+    def build_packet_classes(data:bytes, login:bool= False) -> MotdObjects:
+        if login:
+            return MC_protocol.handle_login_build(data)
+        else:
+            return MC_protocol.handle_ping_build(data)
+
+
+# --------
+# Old code
+# --------
+
+'''
 class MOTD:
     def __init__(self, icon = None) -> None:
         self.icon = icon
@@ -126,3 +202,4 @@ class MOTD:
             sock.sendall(response)
         except Exception as e:
             print("Send error:", e)
+'''

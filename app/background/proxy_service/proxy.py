@@ -46,31 +46,39 @@ class Proxy_TCP:
         main_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         main_sock.bind(bind)
         main_sock.listen(1)
-        print(main_sock)
 
         while self.alive:
             client, client_address = main_sock.accept()
-            print(client_address)
             callback(client, client_address)
 
-    def show_recieved_data(self):
+    def show_recieved_data(self, bufsize:int):
         if self.client is not None:
-            return self.client.recv(1024, socket.MSG_PEEK)
+            data = self.client.recv(bufsize)
+            if data == b"":
+                self.stop()
+            return data
         else: return b""
+
+    def show_recieved_data_non_clearing(self, bufsize:int):
+        if self.client is not None:
+            return self.client.recv(bufsize, socket.MSG_PEEK)
+        else: return b""
+
+    def clear_buffer(self):
+        if self.client is not None:
+            self.client.recv(4092)
 
     def return_client(self, data:Any):
         if self.client is None:
             raise self.InsufficientArgumentError("Calling this function requires the 'client' to be set")
 
-        print(f"Returned: {data}")
         if isinstance(data, dict):
             self.client.sendall(json.dumps(data).encode())
         elif isinstance(data, str):
             self.client.sendall(data.encode())
         elif isinstance(data, bytes):
             self.client.sendall(data)
-        
-        self.stop()
+
 
     def halt(self):
         self.run_event.wait()
@@ -114,8 +122,8 @@ class Proxy_TCP:
                 src.close()
                 dst.close()
 
-        forward(self.client, server_sock)
-        forward(server_sock, self.client)
+        forward(self.client, server_sock, tag="Client->Server:")
+        forward(server_sock, self.client, tag="Server->Client:")
 
         start()
 
